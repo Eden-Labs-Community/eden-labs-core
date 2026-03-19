@@ -1,4 +1,4 @@
-# @eden_labs/core
+# @eden_labs/root
 
 Event manager for the Eden ecosystem. Fast, reliable event bus over raw UDP with at-least-once delivery guarantees.
 
