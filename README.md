@@ -49,6 +49,38 @@ a.stop();
 b.stop();
 ```
 
+### Multiple peers on a single socket (MultiUdpTransport)
+
+When one process needs to communicate with many peers simultaneously, use `MultiUdpTransport`. It uses a **single UDP socket** regardless of how many peers are registered — saving file descriptors and event loop handles.
+
+```ts
+import { MultiUdpTransport } from "@eden_labs/root";
+
+const hub = new MultiUdpTransport();
+
+// Register peers dynamically
+hub.addPeer({ host: "192.168.1.10", port: 5000 });
+hub.addPeer({ host: "192.168.1.11", port: 5000 });
+hub.addPeer({ host: "192.168.1.12", port: 5000 });
+
+// send() fans out to all registered peers
+hub.send(Buffer.from("hello everyone"));
+
+// bind() listens for messages from any peer on a single port
+hub.bind(6000, (msg) => {
+  console.log("received:", msg.toString());
+});
+
+// Remove a peer when it disconnects
+hub.removePeer({ host: "192.168.1.12", port: 5000 });
+
+hub.close();
+```
+
+Benchmark: overhead vs N individual `UdpTransport` instances is negligible (<2%), while using only 1 file descriptor regardless of N.
+
+---
+
 ### Across the internet (P2PTransport — NAT traversal)
 
 For peers behind NAT (home networks, mobile, cloud VMs without public IP), use `P2PTransport`. It automatically tries:
@@ -140,6 +172,23 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 ```
+
+---
+
+## MultiUdpTransport
+
+### `new MultiUdpTransport()`
+
+No constructor arguments. Creates a single UDP socket internally.
+
+| Method | Description |
+|--------|-------------|
+| `addPeer(endpoint)` | Register a peer endpoint `{ host, port }` |
+| `removePeer(endpoint)` | Unregister a peer endpoint |
+| `getPeerCount()` | Returns the number of currently registered peers |
+| `send(msg)` | Sends `msg` to all registered peers |
+| `bind(port, onMessage)` | Listens on `port`, calls `onMessage` for any received message |
+| `close()` | Closes the socket and clears all peers. Idempotent. |
 
 ---
 
@@ -365,6 +414,16 @@ Measured with sequential ping-pong RTT (1000 samples):
 | P2PTransport (relay) | 0.104 ms | 0.158 ms | 0.222 ms | 8,176 msg/s |
 
 P2PTransport adds ~2.6% overhead after connection is established (hole punch path). The relay path adds ~103% because it goes through a WebSocket/TCP intermediary — still fast enough for most use cases, and only used as a fallback.
+
+**MultiUdpTransport — fanout tail latency** (time until last of N peers receives, loopback):
+
+| N peers | MultiUdpTransport (1 socket) p50 | N × UdpTransport (N sockets) p50 | overhead |
+|---------|----------------------------------|-----------------------------------|---------|
+| 10 | 0.104 ms | 0.104 ms | ~0% |
+| 50 | 0.474 ms | 0.465 ms | ~2% |
+| 200 | 1.881 ms | 1.895 ms | ~0% |
+
+Latency scales with N peers due to N sequential `socket.send()` calls, not due to the abstraction. The single-socket overhead vs N individual transports is negligible.
 
 Real-world latencies will be higher due to actual network RTT.
 
