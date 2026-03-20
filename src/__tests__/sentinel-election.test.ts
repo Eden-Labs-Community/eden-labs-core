@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals";
 import { SentinelElection, SENTINEL_HEARTBEAT_MAGIC } from "../sentinel/sentinel-election.js";
 
 describe("SentinelElection", () => {
