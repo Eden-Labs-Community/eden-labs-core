@@ -90,6 +90,45 @@ describe("SignalingClient", () => {
     await new Promise<void>((resolve) => silentServer.close(() => resolve()));
   });
 
+  it("timeout no send() remove listener do WebSocket (sem leak)", async () => {
+    // Servidor que aceita register mas nunca responde a request_connect
+    const leakServer = new WebSocketServer({ port: 0 });
+    const leakPort = await new Promise<number>((resolve) => {
+      leakServer.on("listening", () => {
+        resolve((leakServer.address() as { port: number }).port);
+      });
+    });
+
+    leakServer.on("connection", (ws: WebSocket) => {
+      ws.on("message", (data: Buffer) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === "register") {
+          ws.send(JSON.stringify({ type: "registered" }));
+        }
+        // request_connect → silêncio total (força timeout)
+      });
+    });
+
+    const client = new SignalingClient(`ws://127.0.0.1:${leakPort}`, { timeoutMs: 50 });
+    await client.register("leak-peer", { host: "1.2.3.4", port: 1 });
+
+    // Acessa o WS interno para contar listeners
+    const ws = (client as any).ws as WebSocket;
+    const before = ws.listenerCount("message");
+
+    // 5 requestConnect que dão timeout — cada um adicionava listener sem remover
+    for (let i = 0; i < 5; i++) {
+      await client.requestConnect("leak-peer", "ghost").catch(() => {});
+    }
+
+    const after = ws.listenerCount("message");
+    // Sem o fix, after seria before + 5. Com o fix, deve ser igual ao before.
+    expect(after).toBe(before);
+
+    client.close();
+    await new Promise<void>((resolve) => leakServer.close(() => resolve()));
+  });
+
   it("dois peers distintos conseguem trocar endpoints", async () => {
     const clientA = new SignalingClient(`ws://127.0.0.1:${port}`);
     const clientB = new SignalingClient(`ws://127.0.0.1:${port}`);

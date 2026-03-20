@@ -72,6 +72,7 @@ export class SignalingClient {
   ): Promise<ServerMessage> {
     return new Promise<ServerMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
+        ws.off("message", onMessage);
         reject(new EdenSignalingError(`timeout waiting for "${expectedType}"`));
       }, this.timeoutMs);
 
