@@ -10,9 +10,12 @@
  * Uso: npm run bench
  */
 
+import dgram from "node:dgram";
 import { WebSocketServer, WebSocket } from "ws";
 import { Eden } from "../src/eden/eden.js";
 import { P2PTransport } from "../src/transports/p2p/p2p-transport.js";
+import { MultiUdpTransport } from "../src/transports/udp/multi-udp-transport.js";
+import { UdpTransport } from "../src/transports/udp/udp-transport.js";
 
 const WARMUP = 100;
 const SAMPLES = 1000;
@@ -185,6 +188,91 @@ async function main() {
   await sig2.close();
   process.stdout.write("done\n");
   printStats("P2PTransport — relay via WebSocket (fallback)", relLat, relTotal);
+
+  // ── 4. MultiUdpTransport — fanout hub → N peers ─────────────────────────
+  // Cenário: hub envia 1 mensagem para N peers simultâneos.
+  // Latência = tempo até o ÚLTIMO peer receber (tail latency).
+  // Comparativo: MultiUdpTransport (1 socket) vs N UdpTransport (N sockets).
+
+  const FANOUT_PEER_COUNTS = [10, 50, 200];
+  const FANOUT_WARMUP = 50;
+  const FANOUT_SAMPLES = 200;
+  const MULTI_BASE_PORT = 43000;
+
+  console.log("\n  MultiUdpTransport — Fanout hub → N peers");
+  console.log("  ─────────────────────────────────────────────────────");
+  console.log("  Métrica: tail latency (último peer receber) — menor é melhor\n");
+
+  for (const N of FANOUT_PEER_COUNTS) {
+    // Sockets que representam os N peers receptores
+    const peerSockets: dgram.Socket[] = [];
+    const peerPorts: number[] = [];
+
+    await new Promise<void>((resolve) => {
+      let bound = 0;
+      for (let i = 0; i < N; i++) {
+        const sock = dgram.createSocket("udp4");
+        const port = MULTI_BASE_PORT + i;
+        peerSockets.push(sock);
+        peerPorts.push(port);
+        sock.bind(port, () => { if (++bound === N) resolve(); });
+      }
+    });
+
+    // ── MultiUdpTransport (1 socket) ──
+    const hub = new MultiUdpTransport();
+    for (const port of peerPorts) hub.addPeer({ host: "127.0.0.1", port });
+
+    const runFanout = async (send: () => void): Promise<number> => {
+      const start = hrMs();
+      await new Promise<void>((resolve) => {
+        let received = 0;
+        for (const sock of peerSockets) {
+          sock.once("message", () => { if (++received === N) resolve(); });
+        }
+        send();
+      });
+      return hrMs() - start;
+    };
+
+    const multiLat: number[] = [];
+    for (let i = 0; i < FANOUT_WARMUP; i++) await runFanout(() => hub.send(Buffer.from("w")));
+    for (let i = 0; i < FANOUT_SAMPLES; i++) multiLat.push(await runFanout(() => hub.send(Buffer.from("x"))));
+    hub.close();
+
+    // ── N UdpTransport (N sockets) ──
+    const udpInstances = peerPorts.map((port) => new UdpTransport({ host: "127.0.0.1", port }));
+
+    const udpLats: number[] = [];
+    const runFanoutUdp = async () => {
+      const start = hrMs();
+      await new Promise<void>((resolve) => {
+        let received = 0;
+        for (const sock of peerSockets) {
+          sock.once("message", () => { if (++received === N) resolve(); });
+        }
+        for (const t of udpInstances) t.send(Buffer.from("x"));
+      });
+      return hrMs() - start;
+    };
+
+    for (let i = 0; i < FANOUT_WARMUP; i++) await runFanoutUdp();
+    for (let i = 0; i < FANOUT_SAMPLES; i++) udpLats.push(await runFanoutUdp());
+    for (const t of udpInstances) t.close();
+    for (const sock of peerSockets) sock.close();
+
+    const multiSorted = [...multiLat].sort((a, b) => a - b);
+    const udpSorted = [...udpLats].sort((a, b) => a - b);
+    const multiP50 = percentile(multiSorted, 50);
+    const multiP95 = percentile(multiSorted, 95);
+    const udpP50 = percentile(udpSorted, 50);
+    const udpP95 = percentile(udpSorted, 95);
+    const overhead = (((multiP50 - udpP50) / udpP50) * 100).toFixed(1);
+
+    console.log(`  N=${String(N).padEnd(3)}  MultiUdp  p50=${multiP50.toFixed(3)}ms  p95=${multiP95.toFixed(3)}ms  (1 socket)`);
+    console.log(`         ${N}xUdpTp  p50=${udpP50.toFixed(3)}ms  p95=${udpP95.toFixed(3)}ms  (${N} sockets)  overhead=${overhead}%`);
+    console.log();
+  }
 
   // ── Comparativo ──────────────────────────────────────────────────────────
   const udpP50 = [...udpLat].sort((a, b) => a - b)[Math.floor(udpLat.length * 0.5)]!;

@@ -41,11 +41,42 @@ interface Endpoint {
 
 **Transportes incluídos no pacote:**
 - `UdpTransport` — wrapper sobre `node:dgram`, default para ambientes controlados
+- `MultiUdpTransport` — socket único para N peers simultâneos (fanout, ver seção 2.3)
 - `P2PTransport` — UDP + STUN + hole punching + relay fallback (ver seção 3)
 
 ---
 
-### 2.2 — P2P Transport Customizado (2026-03-19)
+### 2.2 — MultiUdpTransport: socket único para N peers (2026-03-20)
+
+**Decisão:** Adicionar `MultiUdpTransport` que mantém um único socket `dgram` independente de quantos peers estão registrados.
+
+**Motivação:** `UdpTransport` cria um socket por destino. Em cenários hub-and-spoke (1 processo se comunicando com N peers), isso significa N file descriptors, N handles no event loop e N binds. `MultiUdpTransport` resolve isso com 1 socket + Map de endpoints.
+
+**API:**
+```ts
+const hub = new MultiUdpTransport();
+hub.addPeer({ host, port });   // registra peer
+hub.removePeer({ host, port }); // remove peer
+hub.send(msg);                 // fanout para todos os peers
+hub.bind(port, onMessage);     // escuta qualquer origem
+hub.close();                   // limpa peers + fecha socket
+```
+
+**Resultado do benchmark (fanout tail latency, loopback):**
+
+| N peers | MultiUdpTransport | N × UdpTransport | overhead |
+|---------|-------------------|------------------|---------|
+| 10 | 0.104 ms | 0.104 ms | ~0% |
+| 50 | 0.474 ms | 0.465 ms | ~2% |
+| 200 | 1.881 ms | 1.895 ms | ~0% |
+
+O overhead de latência é negligenciável. O ganho real é de recursos: 1 fd vs N, independente do tamanho da rede.
+
+**Detalhe de implementação:** `close()` chama `peers.clear()` antes de fechar o socket. Isso garante que o Map não retém referências de endpoints após o transporte ser encerrado, e torna `send()` seguro sem necessidade de checar estado do socket (peers vazios = loop não executa).
+
+---
+
+### 2.3 — P2P Transport Customizado (2026-03-19)
 
 **Decisão:** Não usar WebRTC. Implementar NAT traversal customizado sobre UDP puro, similar ao que engines de jogos fazem (ENet, GameNetworkingSockets).
 
@@ -182,6 +213,8 @@ src/
     udp/
       udp-transport.ts           ← wrapper node:dgram (atual socket.ts renomeado)
       udp-transport.test.ts
+      multi-udp-transport.ts     ← socket único para N peers (fanout)
+      multi-udp-transport.test.ts
     p2p/
       p2p-transport.ts           ← orquestra STUN + hole punch + relay
       p2p-transport.test.ts

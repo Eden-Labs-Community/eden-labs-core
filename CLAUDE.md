@@ -111,6 +111,15 @@ Implementação padrão de `EdenTransport` sobre `node:dgram` UDP puro.
 - Zero dependências externas
 - `close()` idempotente via try/catch (dgram lança se já fechado)
 
+### `transports/udp/multi-udp-transport.ts`
+Implementação de `EdenTransport` com socket único para N peers simultâneos.
+- `addPeer(endpoint)` / `removePeer(endpoint)` — gerencia peers via Map keyed por `host:port`
+- `send(msg)` — fanout para todos os peers registrados
+- `bind(port, onMessage)` — escuta qualquer origem no socket único
+- `getPeerCount()` — retorna número de peers ativos (usado em testes)
+- `close()` — chama `peers.clear()` antes de fechar o socket; idempotente
+- **Overhead vs N UdpTransport**: negligenciável (<2%) em fanout, com vantagem de 1 fd vs N
+
 ### `transports/p2p/p2p-transport.ts`
 Implementação de `EdenTransport` com NAT traversal automático.
 - `connect(targetPeerId)` — executa STUN → Signaling → HolePunch → Relay em sequência
@@ -227,6 +236,7 @@ src/
   transports/
     transport.ts              ← interface EdenTransport + Endpoint
     udp/udp-transport.ts      ← implementação padrão (node:dgram)
+    udp/multi-udp-transport.ts ← socket único para N peers (fanout)
     p2p/p2p-transport.ts      ← NAT traversal (STUN + hole punch + relay)
   stun/
     stun-message.ts           ← RFC 5389 builder/parser
@@ -290,6 +300,7 @@ Overhead do hole punch pós-conexão é negligenciável. Relay tem ~2× overhead
 - [x] `Eden` recebe `transport?: (target) => EdenTransport` — default `UdpTransport`
 - [x] `UdpTransport.close()` idempotente — factory pode retornar mesma instância 3× para ackSocket/listenSocket/emitSocket
 - [x] Mesma idempotência em `P2PTransport.close()`
+- [x] `MultiUdpTransport` — socket único para N peers; `close()` chama `peers.clear()` antes de fechar socket; overhead <2% vs N UdpTransport em fanout
 
 ### NAT Traversal
 - [x] STUN RFC 5389 do zero (zero deps externas) — `stun-message.ts`
