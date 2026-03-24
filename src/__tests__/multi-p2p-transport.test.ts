@@ -35,19 +35,19 @@ describe("MultiP2PTransport", () => {
             }
           }
 
-          if (msg.type === "relay") {
+          if (msg.type === "join") {
+            const existing = peers.get(msg.peerId);
+            if (existing) peers.set(msg.peerId, { ...existing, ws });
+            else peers.set(msg.peerId, { endpoint: { host: "0.0.0.0", port: 0 }, ws });
+          }
+
+          if (msg.type === "send") {
             const target = peers.get(msg.targetPeerId);
             if (target && target.ws.readyState === WebSocket.OPEN) {
               target.ws.send(
-                JSON.stringify({ type: "data", from: msg.fromPeerId, payload: msg.payload })
+                JSON.stringify({ type: "message", fromPeerId: msg.fromPeerId, payload: msg.payload })
               );
             }
-          }
-
-          if (msg.type === "identify") {
-            const existing = peers.get(msg.peerId);
-            if (existing) peers.set(msg.peerId, { ...existing, ws });
-            ws.send(JSON.stringify({ type: "identified" }));
           }
         });
       });

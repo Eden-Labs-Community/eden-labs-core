@@ -14,7 +14,7 @@ export class RelayClient implements EdenTransport {
 
   send(msg: Buffer): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.relay(msg);
+      this.sendToServer(msg);
     } else {
       this.queue.push(msg);
       this.connect();
@@ -41,11 +41,10 @@ export class RelayClient implements EdenTransport {
     }
   }
 
-  private relay(msg: Buffer): void {
+  private sendToServer(msg: Buffer): void {
     this.ws!.send(
       JSON.stringify({
-        type: "relay",
-        fromPeerId: this.peerId,
+        type: "send",
         targetPeerId: this.targetPeerId,
         payload: msg.toString("base64"),
       })
@@ -65,19 +64,18 @@ export class RelayClient implements EdenTransport {
       this.ws = ws;
 
       ws.once("open", () => {
-        ws.send(JSON.stringify({ type: "identify", peerId: this.peerId }));
+        // Associate this WS to our peerId via join (replaces old identify)
+        ws.send(JSON.stringify({ type: "join", peerId: this.peerId }));
+        for (const m of this.queue) this.sendToServer(m);
+        this.queue = [];
+        resolve();
       });
 
       ws.once("error", (err) => reject(err));
 
       ws.on("message", (data: Buffer) => {
         const msg = JSON.parse(data.toString());
-        if (msg.type === "identified") {
-          for (const m of this.queue) this.relay(m);
-          this.queue = [];
-          resolve();
-        }
-        if (msg.type === "data" && this.onMessage) {
+        if (msg.type === "message" && this.onMessage) {
           this.onMessage(Buffer.from(msg.payload as string, "base64"));
         }
       });
