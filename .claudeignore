@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Git internals
+.git/
+
+# Coverage
+coverage/
+
+# Source maps
+*.js.map
+
+# Lock file (huge, not useful for context)
+package-lock.json
+
+# Environment
+.env
