@@ -33,6 +33,7 @@ interface MultiP2PTransportOptions {
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
   cascadeStepMs?: number;
+  maxPeers?: number;
 }
 
 /**
@@ -105,6 +106,12 @@ export class MultiP2PTransport implements EdenTransport {
 
   async addPeer(myId: string, targetId: string, signalingUrl: string): Promise<void> {
     if (!this.socket) throw new Error("Must call bind() before addPeer()");
+
+    const maxPeers = this.options.maxPeers ?? 10;
+    // Only check limit for new peers (not reconnections to existing ones)
+    if (!this.peers.has(targetId) && this.peers.size >= maxPeers) {
+      throw new Error(`maxPeers limit reached (${maxPeers})`);
+    }
 
     // Bug 3: limpar peer existente antes de sobrescrever (evita relay leak)
     this.removePeer(targetId);

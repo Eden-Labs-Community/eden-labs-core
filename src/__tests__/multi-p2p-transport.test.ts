@@ -481,6 +481,55 @@ describe("MultiP2PTransport", () => {
     });
   }, 8000);
 
+  it("addPeer rejects when maxPeers is reached", async () => {
+    const url = `ws://127.0.0.1:${signalingPort}`;
+    const opts = { ...testOpts, maxPeers: 1 };
+    const tA = new MultiP2PTransport(opts);
+    const tB = new MultiP2PTransport(testOpts);
+    const tC = new MultiP2PTransport(testOpts);
+
+    tA.bind(0, () => {});
+    tB.bind(0, () => {});
+    tC.bind(0, () => {});
+
+    await Promise.all([
+      tA.addPeer("max-a", "max-b", url),
+      tB.addPeer("max-b", "max-a", url),
+    ]);
+
+    expect(tA.getPeerCount()).toBe(1);
+
+    // Second addPeer should throw
+    await expect(
+      tA.addPeer("max-a", "max-c", url)
+    ).rejects.toThrow("maxPeers");
+
+    tA.close();
+    tB.close();
+    tC.close();
+  }, 8000);
+
+  it("existing peers are not affected by maxPeers limit", async () => {
+    const url = `ws://127.0.0.1:${signalingPort}`;
+    const opts = { ...testOpts, maxPeers: 1 };
+    const tA = new MultiP2PTransport(opts);
+    const tB = new MultiP2PTransport(testOpts);
+
+    tA.bind(0, () => {});
+    tB.bind(0, () => {});
+
+    await Promise.all([
+      tA.addPeer("exist-a", "exist-b", url),
+      tB.addPeer("exist-b", "exist-a", url),
+    ]);
+
+    // Existing peer still works
+    expect(tA.getPeerCount()).toBe(1);
+
+    tA.close();
+    tB.close();
+  }, 8000);
+
   it("removePeer com peers.size=0 para election (mesh morta)", (done) => {
     const url = `ws://127.0.0.1:${signalingPort}`;
     const sentinelOpts = { ...testOpts, sentinel: true, heartbeatIntervalMs: 200 };
